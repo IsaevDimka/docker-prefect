@@ -1,0 +1,115 @@
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME}
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: ${SUBNET}.0/24
+          gateway: ${SUBNET}.1
+
+x-prefect-worker: &prefect-worker
+  build:
+    context: images/prefect-worker
+  image: ${COMPOSE_PROJECT_NAME}-prefect-worker:local
+  environment: &prefect-worker-env
+    PREFECT_API_URL: http://prefect-server:4200/api
+    VAULT_ADDR: http://vault:8200
+    VAULT_TOKEN: ${VAULT_TOKEN}
+
+services:
+  postgres:
+    image: postgres:18.6-alpine
+    container_name: ${COMPOSE_PROJECT_NAME}-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: prefect
+      POSTGRES_PASSWORD: prefect
+      POSTGRES_DB: prefect
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - ./volumes/postgres:/var/lib/postgresql/data:rw
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prefect -d prefect"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  vault:
+    image: hashicorp/vault:2.1.1
+    container_name: ${COMPOSE_PROJECT_NAME}-vault
+    restart: always
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_TOKEN}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://127.0.0.1:8200
+    ports:
+      - "127.0.0.1:8200:8200"
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  prefect-server:
+    image: prefecthq/prefect:3.8.7-python3.14
+    container_name: ${COMPOSE_PROJECT_NAME}-prefect-server
+    restart: always
+    command: ["prefect", "server", "start", "--host", "0.0.0.0"]
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
+      PREFECT_UI_API_URL: http://localhost:4200/api
+      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+    ports:
+      - "127.0.0.1:4200:4200"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # One-shot: work pool + Vault secrets + VaultSecret block in Prefect
+  prefect-init:
+    <<: *prefect-worker
+    container_name: ${COMPOSE_PROJECT_NAME}-prefect-init
+    restart: "no"
+    command: ["python", "/opt/scripts/init.py"]
+    volumes:
+      - ./scripts/init.py:/opt/scripts/init.py:ro
+    depends_on:
+      prefect-server:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+
+  prefect-worker:
+    <<: *prefect-worker
+    container_name: ${COMPOSE_PROJECT_NAME}-prefect-worker
+    restart: always
+    command: ["prefect", "worker", "start", "--pool", "docker-pool", "--type", "docker"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      prefect-init:
+        condition: service_completed_successfully
+
+  # Utility container for `prefect deploy` / `prefect deployment run`, see Makefile
+  prefect-cli:
+    <<: *prefect-worker
+    profiles:
+      - cli
+    working_dir: /opt/flows
+    environment:
+      <<: *prefect-worker-env
+      FLOWS_IMAGE: ${FLOWS_IMAGE}
+      DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME}
+    volumes:
+      - ./flows:/opt/flows:ro
+    depends_on:
+      prefect-init:
+        condition: service_completed_successfully

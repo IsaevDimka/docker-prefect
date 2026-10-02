@@ -1,0 +1,43 @@
+# Deploy: `make prefect-deploy` (runs `prefect deploy --all` inside the prefect-cli container).
+# {{ $VAR }} values come from the prefect-cli environment (see docker-compose.yml).
+name: docker-prefect
+prefect-version: 3.8.7
+
+build: null
+push: null
+pull:
+  - prefect.deployments.steps.set_working_directory:
+      directory: /opt/flows
+
+definitions:
+  work_pool: &work_pool
+    name: docker-pool
+    job_variables:
+      image: "{{ $FLOWS_IMAGE }}"
+      image_pull_policy: Never
+      auto_remove: true
+      networks:
+        - "{{ $DOCKER_NETWORK }}"
+      env:
+        VAULT_BLOCK: vault
+        VAULT_MOUNT_POINT: secret
+        VAULT_SECRET_PATH: prefect
+
+deployments:
+  - name: hello
+    entrypoint: pipelines/hello/flow.py:hello
+    work_pool: *work_pool
+    tags: [example]
+    parameters:
+      name: docker-prefect
+    schedules:
+      - cron: "*/15 * * * *"
+        timezone: Europe/Moscow
+        active: false
+
+  - name: vault-example
+    entrypoint: pipelines/vault_example/flow.py:vault_example
+    work_pool: *work_pool
+    tags: [example, vault]
+    parameters:
+      required_keys: [greeting, api_key]
