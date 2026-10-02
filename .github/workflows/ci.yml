@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+
+env:
+  UV_VERSION: "0.12.22"
+
+jobs:
+  quality:
+    name: Lint & tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flows
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: flows/uv.lock
+      - run: uv sync --frozen
+      - name: ruff
+        run: uv run ruff check . ../scripts && uv run ruff format --check . ../scripts
+      - name: pytest
+        run: uv run pytest -v
+
+  e2e:
+    name: Docker compose e2e
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v7
+      - name: make init (build, up, deploy)
+        run: make init
+      - name: Run hello deployment
+        run: timeout 300 make prefect-run DEPLOYMENT=hello/hello
+      - name: Run vault-example deployment
+        run: timeout 300 make prefect-run DEPLOYMENT=vault-example/vault-example
+      - name: Logs
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+      - name: Teardown
+        if: always()
+        run: make docker-down

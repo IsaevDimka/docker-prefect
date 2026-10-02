@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "docker-prefect-flows"
+version = "0.1.0"
+description = "Example Prefect flows for docker-prefect"
+requires-python = "~=3.14.0"
+dependencies = [
+    "prefect==3.8.7",
+    "prefect-docker==0.7.4",
+    "prefect-vault==0.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.15",
+]
+
+[tool.hatch.build.targets.wheel]
+include = [
+    "pipelines",
+    "libs",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "RUF"]
+ignore = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

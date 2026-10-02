@@ -1,0 +1,12 @@
+.idea/
+.vscode/
+.fleet/
+.DS_Store
+
+volumes/
+
+.venv/
+__pycache__/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
